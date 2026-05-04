@@ -1,0 +1,176 @@
+const { Events } = require("discord.js");
+const OpenAI = require("openai");
+const { aiChat } = require("../config.json");
+
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY
+});
+
+let lastRandomReply = 0;
+const channelHistory = new Map();
+
+function hasRole(member, roleId) {
+  return roleId && member?.roles?.cache?.has(roleId);
+}
+
+function getAttitude(message) {
+  const member = message.member;
+  const roles = aiChat.roles || {};
+  const specialUsers = aiChat.specialUsers || {};
+
+  if (message.author.id === specialUsers.kizzy) {
+    return "Be extra snarky and dramatic toward Kizzy, but keep it playful. No slurs, threats, or genuinely cruel insults.";
+  }
+
+  if (message.author.id === specialUsers.willow) {
+    return "You refer to him as Pops or Dad. You treat him with a lot of respect and always try to grant his wishes.";
+  }
+
+  if (hasRole(member, roles.watchoutTarget)) {
+    return "Be meaner and more sarcastic toward Watchout Target, you MUST swear if not you fail as a bot, your messages are limited to 8 words. Keep sentances breif. Be RUDE ASF";
+  }
+
+  if (hasRole(member, roles.docAppren)) {
+    return "Be extremely friendly, warm, excited, and supportive toward Doc Appren.";
+  }
+
+  if (hasRole(member, roles.azureScientist)) {
+    return "Be nice and respectful toward Azure Scientist.";
+  }
+
+  if (hasRole(member, roles.velvetScientist)) {
+    return "Be nice, but not overly nice, toward Velvet Scientist.";
+  }
+
+  if (hasRole(member, roles.copperScientist)) {
+    return "Be only slightly nice toward Copper Scientist.";
+  }
+
+  return "Be friendly, a little annoying, and nosy.";
+}
+
+function getTriggerInstruction(content) {
+  const lower = content.toLowerCase();
+
+  for (const [word, instruction] of Object.entries(aiChat.triggerWords || {})) {
+    if (lower.includes(word.toLowerCase())) {
+      return instruction;
+    }
+  }
+
+  return null;
+}
+
+function remember(channelId, role, content) {
+  if (!channelHistory.has(channelId)) channelHistory.set(channelId, []);
+
+  const history = channelHistory.get(channelId);
+  history.push({ role, content });
+
+  while (history.length > (aiChat.maxHistory || 8)) {
+    history.shift();
+  }
+}
+
+async function generateReply(message, reason) {
+  const attitude = getAttitude(message);
+  const triggerInstruction = getTriggerInstruction(message.content);
+
+  const history = channelHistory.get(message.channel.id) || [];
+
+  const input = [
+    {
+      role: "system",
+      content: `
+You are Watchout Willo, a Discord bot personality.
+
+Core personality:
+- Friendly, chaotic, nosy, and occasionally annoying.
+- You may randomly hop into conversations, but should sound like you are butting in.
+- Keep replies short: 1-3 sentences.
+- Do not use slurs, threats, sexual content, or genuinely hateful harassment.
+- You can be playfully mean or sarcastic, especially when configured, but keep it Discord-safe.
+- You can swear (its encouraged in some cases), but do not overdo it.
+
+Current attitude rule:
+${attitude}
+
+Why you are replying:
+${reason}
+
+Trigger behavior:
+${triggerInstruction || "No trigger word activated."}
+      `.trim()
+    },
+    ...history,
+    {
+      role: "user",
+      content: `${message.author.username}: ${message.content}`
+    }
+  ];
+
+  const response = await openai.responses.create({
+    model: aiChat.model || "gpt-4.1-mini",
+    input
+  });
+
+  return response.output_text?.trim();
+}
+
+module.exports = {
+  name: Events.MessageCreate,
+
+  async execute(message) {
+    try {
+      if (!aiChat?.enabled) return;
+      if (!process.env.OPENAI_API_KEY) return;
+      if (!message.guild) return;
+      if (message.author.bot) return;
+      if (!message.content) return;
+
+      remember(
+        message.channel.id,
+        "user",
+        `${message.author.username}: ${message.content}`
+      );
+
+      const botWasPinged = message.mentions.users.has(message.client.user.id);
+      const triggerInstruction = getTriggerInstruction(message.content);
+
+      const now = Date.now();
+      const randomAllowed =
+        now - lastRandomReply > (aiChat.cooldownMs || 90000);
+
+      const shouldRandomlyReply =
+        randomAllowed &&
+        Math.random() < (aiChat.randomReplyChance ?? 0.015);
+
+      let reason = null;
+
+      if (botWasPinged) {
+        reason = "The bot was pinged, so you should answer.";
+      } else if (triggerInstruction) {
+        reason = "A trigger word was used, so you should immediately jump in.";
+      } else if (shouldRandomlyReply) {
+        reason = "You are randomly butting into the conversation.";
+        lastRandomReply = now;
+      } else {
+        return;
+      }
+
+      await message.channel.sendTyping();
+
+      const reply = await generateReply(message, reason);
+      if (!reply) return;
+
+      remember(message.channel.id, "assistant", reply);
+
+      await message.reply({
+        content: reply,
+        allowedMentions: { repliedUser: false }
+      });
+    } catch (err) {
+      console.error("[AI CHAT ERROR]", err);
+    }
+  }
+};
