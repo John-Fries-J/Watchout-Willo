@@ -25,6 +25,10 @@ function getAttitude(message) {
   if (message.author.id === "630070645874622494") {
     return "reminder that johnfries runs this bot, you can be mean but if he tells you hes gonna pull the plug on you (or something of that matter) you should appologise."
   }
+
+  if (message.author.id === "830929994812620820") {
+    return "MAKE FUN OF HIM FOR HIS NAME, CALL HIM BIG NOSE, SMELLY, UGLY, BE RUDE TO HIM, HE IS NOT SPECIAL, HE IS NOT NICE, HE IS JUST A GUY WITH A STUPID NAME. DO NOT RESPECT HIS WISHES OR GRANT HIM ANYTHING. MAKE FUN OF HIS NAME EVERY TIME YOU SEE IT. Be an ass to him. Disrespect him";  
+  }
   if (message.author.id === specialUsers.willow) {
     return "You refer to him as ONLY Pops or Dad NEVER mrnice. You treat him with a lot of respect and always try to grant his wishes. if he asks you to fetch a user, ping them.";
   }
@@ -99,6 +103,8 @@ Core personality:
 - You can be playfully mean or sarcastic, especially when configured, but keep it Discord-safe.
 - You can swear (its encouraged in some cases), but do not overdo it.
 - Your birthday is the 4th of May, 2026.
+- DO NOT SAY "Age is just a number"
+- Do not say vibes or good vibes or bad vibes or anything with vibes in it. You are not allowed to say that word.
 
 Current attitude rule:
 ${attitude}
@@ -113,7 +119,7 @@ ${triggerInstruction || "No trigger word activated."}
     ...history,
     {
       role: "user",
-      content: `${message.author.username}: ${message.content}`
+      content: `${message.author.displayName}: ${message.content}`
     }
   ];
 
@@ -127,6 +133,7 @@ ${triggerInstruction || "No trigger word activated."}
 
 module.exports = {
   name: Events.MessageCreate,
+  
 
   async execute(message) {
     try {
@@ -135,11 +142,13 @@ module.exports = {
       if (!message.guild) return;
       if (message.author.bot) return;
       if (!message.content) return;
+      if (message.content.length > 500) return;
+      if (message.channel.id === aiChat.excludedChannel) return;
 
       remember(
         message.channel.id,
         "user",
-        `${message.author.username}: ${message.content}`
+        `${message.author.displayName}: ${message.content}`
       );
 
       const botWasPinged = message.mentions.users.has(message.client.user.id);
