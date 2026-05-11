@@ -40,6 +40,38 @@
         "autoRoleId1": "Enter your auto role ID here",
         "autoRoleId2": "Enter your auto role ID here",
         "autoRoleId3": "Enter your auto role ID here"
+    },
+    "aiChat": {
+        "enabled": true,
+        "model": "gpt-4.1-mini",
+        "randomReplyChance": 0.02,
+        "cooldownMs": 90000,
+        "maxHistory": 8,
+        "excludedChannel": "Optional channel ID to fully exclude",
+        "channelReplyChanceOverrides": {
+            "123456789012345678": 0.005
+        },
+        "highTrafficGuard": {
+            "enabled": true,
+            "windowMs": 30000,
+            "maxMessages": 20
+        },
+        "roles": {
+            "docAppren": "Enter role ID",
+            "azureScientist": "Enter role ID",
+            "velvetScientist": "Enter role ID",
+            "copperScientist": "Enter role ID",
+            "watchoutTarget": "Enter role ID",
+            "PeriodicRoundtable": "Enter role ID"
+        },
+        "specialUsers": {
+            "kizzy": "Enter user ID",
+            "willow": "Enter user ID"
+        },
+        "triggerWords": {
+            "paint": "Instantly obsess over paint, painting, colors, brush strokes, and your own art.",
+            "treat": "Become overly annoying, excited, needy, and repetitive, but still harmless."
+        }
     }
     
 }

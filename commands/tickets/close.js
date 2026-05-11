@@ -1,34 +1,43 @@
-const { SlashCommandBuilder, PermissionsBitField, PermissionFlagsBits, EmbedBuilder } = require('discord.js');
+const { SlashCommandBuilder, PermissionFlagsBits, EmbedBuilder } = require('discord.js');
 const { green } = require('../../colors.json');
+const {
+    loadConfig,
+    isOpenTicketChannel,
+    closeTicketChannel,
+} = require('../../ticketUtils.js');
 
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('close')
-        .setDefaultMemberPermissions(PermissionFlagsBits.ManageMessages)
-        .setDescription('Closes the ticket'),
+        .setDescription('Close the current ticket channel'),
     async execute(interaction) {
-        if (!interaction.channel.name.startsWith('ticket-')) {
-            return await interaction.reply({ content: 'You can only use this command in a ticket channel', ephemeral: true });
+        const config = loadConfig();
+        const hasManageChannels = interaction.member.permissions.has(PermissionFlagsBits.ManageChannels);
+        const hasTicketRole = config.ticketRole && interaction.member.roles.cache.has(config.ticketRole);
+
+        if (!hasManageChannels && !hasTicketRole) {
+            return interaction.reply({ content: 'You do not have permission to close tickets.', ephemeral: true });
         }
-        const ticketUser = interaction.channel.topic;
-        await interaction.channel.permissionOverwrites.set([
-              {
-              id: ticketUser,
-              deny: [PermissionsBitField.Flags.ViewChannel]
-              },
-              {
-                id: interaction.guild.roles.everyone,
-                deny: [PermissionsBitField.Flags.ViewChannel],
-              },
-            ]);
-            const closersTicket = new EmbedBuilder()
-                .setTitle('Your ticket has been closed!')
-                .setDescription('If you need further assistance, please open a new ticket.')
-                .setColor(green);
-                const guy = interaction.guild.members.cache.get(ticketUser);
-                guy.send({ embeds: [closersTicket] });
-        const newName = interaction.channel.name.replace('ticket-', 'closed-');
-        await interaction.guild.channels.edit(interaction.channel.id, { name: `${newName}` });
-        await interaction.reply({ content: `Ticket was closed by <@${interaction.user.id}>`});
+
+        if (!isOpenTicketChannel(interaction.channel, config.ticketCategoryId)) {
+            return interaction.reply({ content: 'You can only use this in an open ticket channel.', ephemeral: true });
+        }
+
+        const closeResult = await closeTicketChannel(interaction.channel, interaction.guild, config.ticketRole);
+        if (!closeResult.ok) {
+            return interaction.reply({ content: closeResult.error, ephemeral: true });
+        }
+
+        const closedEmbed = new EmbedBuilder()
+            .setTitle('Ticket Closed')
+            .setDescription(`Closed by <@${interaction.user.id}>`)
+            .setColor(green);
+
+        const ownerMember = await interaction.guild.members.fetch(closeResult.ownerId).catch(() => null);
+        if (ownerMember) {
+            ownerMember.send({ embeds: [closedEmbed] }).catch(() => null);
+        }
+
+        return interaction.reply({ content: `Ticket closed by <@${interaction.user.id}>.` });
     },
 };

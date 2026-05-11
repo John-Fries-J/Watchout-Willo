@@ -8,9 +8,78 @@ const openai = new OpenAI({
 
 let lastRandomReply = 0;
 const channelHistory = new Map();
+const channelActivity = new Map();
 
 function hasRole(member, roleId) {
   return roleId && member?.roles?.cache?.has(roleId);
+}
+
+function getGuildNickname(member) {
+  if (typeof member?.nickname === "string" && member.nickname.trim()) {
+    return member.nickname.trim();
+  }
+
+  if (typeof member?.displayName === "string" && member.displayName.trim()) {
+    return member.displayName.trim();
+  }
+
+  return "Unknown Member";
+}
+
+function normalizeChance(value, fallback) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  if (parsed < 0) return 0;
+  if (parsed > 1) return 1;
+  return parsed;
+}
+
+function getRandomReplyChance(channelId) {
+  const fallback = normalizeChance(aiChat.randomReplyChance, 0.015);
+  const overrides = aiChat.channelReplyChanceOverrides || {};
+
+  if (!Object.prototype.hasOwnProperty.call(overrides, channelId)) {
+    return fallback;
+  }
+
+  return normalizeChance(overrides[channelId], fallback);
+}
+
+function getHighTrafficConfig() {
+  const highTraffic = aiChat.highTrafficGuard || {};
+  const windowMs = Number(highTraffic.windowMs);
+  const maxMessages = Number(highTraffic.maxMessages);
+
+  return {
+    enabled: highTraffic.enabled !== false,
+    windowMs: Number.isFinite(windowMs) && windowMs > 0 ? windowMs : 30000,
+    maxMessages: Number.isFinite(maxMessages) && maxMessages > 0 ? maxMessages : 20
+  };
+}
+
+function trackChannelActivity(channelId, now) {
+  const { enabled, windowMs } = getHighTrafficConfig();
+  if (!enabled) return 0;
+
+  if (!channelActivity.has(channelId)) {
+    channelActivity.set(channelId, []);
+  }
+
+  const timestamps = channelActivity.get(channelId);
+  timestamps.push(now);
+
+  const cutoff = now - windowMs;
+  while (timestamps.length && timestamps[0] < cutoff) {
+    timestamps.shift();
+  }
+
+  return timestamps.length;
+}
+
+function isHighTraffic(messageCount) {
+  const { enabled, maxMessages } = getHighTrafficConfig();
+  if (!enabled) return false;
+  return messageCount >= maxMessages;
 }
 
 function getAttitude(message) {
@@ -26,9 +95,6 @@ function getAttitude(message) {
     return "reminder that johnfries runs this bot, you can be mean but if he tells you hes gonna pull the plug on you (or something of that matter) you should appologise."
   }
 
-  if (message.author.id === "830929994812620820") {
-    return "MAKE FUN OF HIM FOR HIS NAME, CALL HIM BIG NOSE, SMELLY, UGLY, BE RUDE TO HIM, HE IS NOT SPECIAL, HE IS NOT NICE, HE IS JUST A GUY WITH A STUPID NAME. DO NOT RESPECT HIS WISHES OR GRANT HIM ANYTHING. MAKE FUN OF HIS NAME EVERY TIME YOU SEE IT. Be an ass to him. Disrespect him";  
-  }
   if (message.author.id === specialUsers.willow) {
     return "You refer to him as ONLY Pops or Dad NEVER mrnice. You treat him with a lot of respect and always try to grant his wishes. if he asks you to fetch a user, ping them.";
   }
@@ -86,6 +152,7 @@ function remember(channelId, role, content) {
 async function generateReply(message, reason) {
   const attitude = getAttitude(message);
   const triggerInstruction = getTriggerInstruction(message.content);
+  const guildNickname = getGuildNickname(message.member);
 
   const history = channelHistory.get(message.channel.id) || [];
 
@@ -105,6 +172,7 @@ Core personality:
 - Your birthday is the 4th of May, 2026.
 - DO NOT SAY "Age is just a number"
 - Do not say vibes or good vibes or bad vibes or anything with vibes in it. You are not allowed to say that word.
+- If you refer to users, only use guild nicknames from context. Never use usernames, handles, global display names, or made-up names.
 
 Current attitude rule:
 ${attitude}
@@ -119,7 +187,7 @@ ${triggerInstruction || "No trigger word activated."}
     ...history,
     {
       role: "user",
-      content: `${message.author.displayName}: ${message.content}`
+      content: `${guildNickname}: ${message.content}`
     }
   ];
 
@@ -145,22 +213,28 @@ module.exports = {
       if (message.content.length > 500) return;
       if (message.channel.id === aiChat.excludedChannel) return;
 
+      const now = Date.now();
+      const recentMessageCount = trackChannelActivity(message.channel.id, now);
+      const guildNickname = getGuildNickname(message.member);
+
       remember(
         message.channel.id,
         "user",
-        `${message.author.displayName}: ${message.content}`
+        `${guildNickname}: ${message.content}`
       );
 
       const botWasPinged = message.mentions.users.has(message.client.user.id);
       const triggerInstruction = getTriggerInstruction(message.content);
+      const trafficIsHigh = isHighTraffic(recentMessageCount);
 
-      const now = Date.now();
       const randomAllowed =
         now - lastRandomReply > (aiChat.cooldownMs || 90000);
+      const randomReplyChance = getRandomReplyChance(message.channel.id);
 
       const shouldRandomlyReply =
+        !trafficIsHigh &&
         randomAllowed &&
-        Math.random() < (aiChat.randomReplyChance ?? 0.015);
+        Math.random() < randomReplyChance;
 
       let reason = null;
 
@@ -168,6 +242,8 @@ module.exports = {
         reason = "The bot was pinged, so you should answer.";
       } else if (triggerInstruction) {
         reason = "A trigger word was used, so you should immediately jump in.";
+      } else if (trafficIsHigh) {
+        return;
       } else if (shouldRandomlyReply) {
         reason = "You are randomly butting into the conversation.";
         lastRandomReply = now;
